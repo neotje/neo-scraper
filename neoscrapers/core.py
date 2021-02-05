@@ -5,6 +5,7 @@ from aiohttp import web
 
 from .const import SERVER_CONF
 from neoscrapers.server import NeoScraperServer
+from neoscrapers.routes import setup_routes
 from neoscrapers.scrapermanager import NeoScraperManager
 from neoscrapers.output import OutputManager
 
@@ -33,12 +34,15 @@ class NeoScraper:
     def __init__(self):
         self.app = web.Application()
 
-        self.server = NeoScraperServer(SERVER_CONF.HOST, SERVER_CONF.PORT)
+        self.server = NeoScraperServer(SERVER_CONF.HOST, SERVER_CONF.PORT, self.app)
         self.scraper_manager = NeoScraperManager()
         self.output_manager = OutputManager()
 
     def run(self):
         self.scraper_manager.setup()
+
+        setup_routes(self, self.app)
+
         self.server.run()
 
     def stop(self):

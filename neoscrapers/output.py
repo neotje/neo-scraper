@@ -25,12 +25,12 @@ class Output:
     def output_path(self) -> pathlib.Path:
         return self.path / self.file
 
-    def open(mode: str = 'w'):
+    def open(self, mode: str = 'w'):
         if self._open is not None and self._open.mode == mode:
             return self._open
 
         self._open = open(mode)
         return self._open
 
-    def close():
+    def close(self):
         self._open.close()

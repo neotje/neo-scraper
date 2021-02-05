@@ -1,0 +1,124 @@
+---
+openapi: 3.0.0
+info:
+  title: Simple Scraper API
+  description: NeoScrapers API for user control
+  contact:
+    email: neo@hopjes.net
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  version: 1.0.0
+servers:
+- url: https://virtserver.swaggerhub.com/hop-it/neoscraper/1.0.0
+  description: SwaggerHub API Auto Mocking
+paths:
+  /user:
+    get:
+      summary: current user
+      description: get current user info.
+      responses:
+        "200":
+          description: there is a current user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_200'
+        default:
+          description: no user thus error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_default'
+  /user/login:
+    post:
+      summary: loing user
+      description: user login with email and password and return user info.
+      parameters:
+      - name: user
+        in: header
+        description: info to login a user.
+        required: true
+        style: simple
+        explode: false
+        schema:
+          $ref: '#/components/schemas/user'
+      responses:
+        "200":
+          description: login success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_200'
+        default:
+          description: login error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/inline_response_default'
+  /scraper/list:
+    get:
+      summary: scrapers list.
+      description: get list of scrapers.
+      responses:
+        "200":
+          description: scraper array
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/scraper'
+  /socket:
+    get:
+      summary: WebSocket.
+      description: WebSocket for realtime updates. Is not a http get request.
+      responses:
+        "200":
+          description: WebSocket connected.
+components:
+  schemas:
+    userinfo:
+      type: object
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        active_scraper:
+          type: boolean
+    error:
+      type: object
+      properties:
+        code:
+          type: integer
+        msg:
+          type: string
+    scraper:
+      type: object
+      properties:
+        name:
+          type: string
+    inline_response_200:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/userinfo'
+    inline_response_default:
+      type: object
+      properties:
+        error:
+          $ref: '#/components/schemas/error'
+    user:
+      required:
+      - email
+      - password
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password

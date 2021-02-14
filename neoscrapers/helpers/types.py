@@ -2,24 +2,23 @@ from abc import ABC
 from typing import Optional, Any
 
 from selenium.webdriver.remote.webdriver import WebDriver
+from neoscrapers.helpers.util import Observable
 
 
 class Scraper(ABC):
-    neoscraper: Optional["NeoScraper"] = None
-
     selenium_driver: Optional[WebDriver] = None
 
     @property
-    def name(self) -> Optional[str]:
-        return None
+    def name(self) -> str:
+        return ""
 
     @property
-    def progress(self) -> int:
-        return 0
+    def progress(self) -> Observable:
+        return None
 
     @property
     def output(self):
         return None
 
-    async def async_run(self, **kwargs: Any):
+    async def run(self, **kwargs: Any):
         raise NotImplementedError()

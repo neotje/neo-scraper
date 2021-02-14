@@ -1,13 +1,26 @@
+
+"""
+ScraperManager: done
+NeoScrapers: done
+Scraper: done
+sessions: done
+OutputManager: done
+UserManager: done
+"""
+
+from neoscrapers.users import UserManager
+from neoscrapers import data
+from neoscrapers.output import OutputManager
+from neoscrapers.scrapermanager import NeoScraperManager
+from neoscrapers.routes import setup_routes
+from neoscrapers.server import NeoScraperServer
+from .const import SERVER_CONF
+import asyncio
 import logging
 import sys
 
 from aiohttp import web
 
-from .const import SERVER_CONF
-from neoscrapers.server import NeoScraperServer
-from neoscrapers.routes import setup_routes
-from neoscrapers.scrapermanager import NeoScraperManager
-from neoscrapers.output import OutputManager
 
 logging.basicConfig(
     stream=sys.stdout,
@@ -20,30 +33,30 @@ _LOGGER = logging.getLogger(__name__)
 def run():
     _LOGGER.info("Starting NeoScrapers.")
 
-    neoscraper = NeoScraper()
-
     try:
-        neoscraper.run()
+        asyncio.run(async_run())
     except KeyboardInterrupt:
         pass
     finally:
-        neoscraper.stop()
+        stop()
 
 
-class NeoScraper:
-    def __init__(self):
-        self.app = web.Application()
+server = NeoScraperServer(SERVER_CONF.HOST, SERVER_CONF.PORT)
+scraper_manager = NeoScraperManager()
+output_manager = OutputManager()
+user_manager = UserManager()
 
-        self.server = NeoScraperServer(SERVER_CONF.HOST, SERVER_CONF.PORT, self.app)
-        self.scraper_manager = NeoScraperManager()
-        self.output_manager = OutputManager()
 
-    def run(self):
-        self.scraper_manager.setup()
+async def async_run():
+    """
+    start neoscraper
+    """
+    await scraper_manager.setup()
 
-        setup_routes(self, self.app)
+    setup_routes(server.app)
 
-        self.server.run()
+    await server.run()
 
-    def stop(self):
-        pass
+
+def stop():
+    data.save()

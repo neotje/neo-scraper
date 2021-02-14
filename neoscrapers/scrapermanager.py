@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import pathlib
 import importlib
@@ -5,28 +6,43 @@ import json
 from types import ModuleType
 from typing import TypedDict
 
-from neoscrapers.helpers.scraper import Scraper
+from neoscrapers.helpers.types import Scraper
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class NeoScraperManager:
     def __init__(self):
-        self.ouput_manager = None
         self._cache = {}
         self.scrapers = {}
 
-    def setup(self):
-        integrations = get_integrations(self)
+    async def setup(self):
+        integrations = await get_integrations(self)
 
-        for intergration in integrations:
-            component = intergration.get_component()
+        await asyncio.gather(
+            *(
+                intergration.get_component().setup(self)
+                for intergration in integrations
+                if hasattr(intergration.get_component(), "setup")
+            )
+        )
 
-            if hasattr(component, "setup"):
-                component.setup(self)
+    async def register_scraper(self, name: str, scraper: Scraper):
+        """add scraper to dictonary
 
-    def register_scraper(self, name: str, scraper: Scraper):
+        Args:
+            name (str): scraper name
+            scraper (neoscrapers.helpers.scraper.Scraper): Scraper object
+        """
         self.scrapers[name] = scraper
+
+    def scraper_names(self):
+        """tuple with scraper names
+
+        Returns:
+            tuple: list of scraper names
+        """
+        return (s.name for s in self.scrapers)
 
 
 class Manifest(TypedDict, total=False):
@@ -43,6 +59,16 @@ class Integration:
         module: ModuleType,
         domain: str
     ):
+        """[summary]
+
+        Args:
+            manager (neoscrapers.scrapermanager.NeoScraperManager): scrapermanager for cache.
+            module (types.ModuleType): module
+            domain (str): domain name
+
+        Returns:
+            neoscrapers.scrapermanager.Integration: Integration
+        """
         for base in module.__path__:
             manifest_path = pathlib.Path(base) / domain / "manifest.json"
 
@@ -74,6 +100,14 @@ class Integration:
         file_path: pathlib.Path,
         manifest: Manifest
     ):
+        """Integration
+
+        Args:
+            manager (neoscrapers.neoscrapermanager.NeoScraperManager): for cache purposes
+            pkg_path (str): pkg path to module
+            file_path (pathlib.Path): file path to module
+            manifest (neoscraper.neoscrapermanager.Manifest): Manifest
+        """
         self.manager = manager
         self.pkg_path = pkg_path
         self.file_path = file_path
@@ -98,7 +132,7 @@ class Integration:
         return self.manager._cache[self.domain]
 
 
-def get_integrations(manager: NeoScraperManager):
+async def get_integrations(manager: NeoScraperManager):
     from neoscrapers import scrapers
 
     dirs = (

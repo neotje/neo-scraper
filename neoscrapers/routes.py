@@ -1,127 +1,238 @@
 import logging
-import yaml
-
-from openapi_core import create_spec
-from openapi_core.validation.request.validators import RequestValidator
-from openapi_core.validation.request.datatypes import (
-    OpenAPIRequest,
-    RequestParameters
-)
-
 from werkzeug.datastructures import ImmutableMultiDict
 
-from pathlib import Path
+from aiohttp import WSMsgType
 from aiohttp.web import (
     Request,
-    middleware,
     json_response,
     RouteTableDef,
-    Application
+    Application,
+    StreamResponse
 )
+from aiohttp_session import get_session
 
-from neoscrapers import helpers
+import magic
+
+from neoscrapers import core
+from neoscrapers.users import LoginFailed, UserAlreadyLoggedIn
+from neoscrapers import static
 
 _LOGGER = logging.getLogger(__name__)
 
-"""OpenApi specs file in ./helpers/api_spec.yaml"""
-openapi_spec = create_spec(yaml.load(
-    open(
-        Path(helpers.__path__[0]) / "api_spec.yaml"
+
+class USER_ERRORS:
+    UNKOWN = {
+        "error": {
+            "code": 100,
+            "msg": "who is this user!?"
+        }
+    }
+    NOT_EXIST = {
+        "error": {
+            "code": 101,
+            "msg": "user does not exist."
+        }
+    }
+    MISSING_FIELDS = {
+        "error": {
+            "code": 102,
+            "msg": "missing fields."
+        }
+    }
+    ALREADY_LOGGED_IN = {
+        "error": {
+            "code": 103,
+            "msg": "already someone logged in."
+        }
+    }
+    NOT_LOGGED_IN = {
+        "error": {
+            "code": 104,
+            "msg": "user not logged in."
+        }
+    }
+
+
+class SCRAPER_ERRORS:
+    NOT_EXIST = {
+        "error": {
+            "code": 200,
+            "msg": "scraper does not exist."
+        }
+    }
+
+
+class OUTPUT_ERRORS:
+    NOT_EXIST = {
+        "error": {
+            "code": 300,
+            "msg": "file does not exist."
+        }
+    }
+    INVALID = {
+        "error": {
+            "code": 301,
+            "msg": "invalid filename."
+        }
+    }
+
+def setup_routes(app: Application):
+    """add neoscraper routes to an app.
+    
+    Args:
+        manager (neoscrapers.core.NeoScraper): NeoScraper containing all the other managers.
+        app (aiohttp.web.Application): app to add routes to.
+    """
+
+    routes = RouteTableDef()
+
+    routes.static(
+        '/files',
+        static.__path__[0],
+        show_index=True,
+        follow_symlinks=True,
+        append_version=True
     )
-))
-validator = RequestValidator(openapi_spec)
 
-"""Routes"""
-routes = RouteTableDef()
+    """Get current use if a user is logged in."""
+    @routes.get("/user")
+    async def get_current_user(req: Request):
+        session = await get_session(req)
+        usession = core.user_manager.current_session(session)
 
+        if usession is not None:
+            return json_response({
+                "user": {
+                    "username": usession.user.username,
+                    "email": usession.user.email,
+                    "active_scraper": usession.has_active_scraper
+                }
+            })
 
-@routes.get("/user")
-async def get_current_user(req: Request):
-    res = await validate(req)
-    return json_response(res.errors)
+        return json_response(USER_ERRORS.UNKOWN)
 
+    """Log a user in."""
+    @routes.post("/user/login")
+    async def user_login(req: Request):
+        # get current session
+        session = await get_session(req)
 
-def setup_routes(manager, app: Application):
-    app.add_routes(routes)
+        """has required fields"""
+        if 'email' in req.headers and 'password' in req.headers:
+            try:
+                email = req.headers.get('email')
+                password = req.headers.get('password')
+                user = core.user_manager.login(session, email, password)
 
+                return json_response({
+                    "user": {
+                        "username": user.username,
+                        "email": user.email
+                    }
+                })
+            except UserAlreadyLoggedIn:
+                return json_response(USER_ERRORS.ALREADY_LOGGED_IN)
+            except LoginFailed:
+                return json_response(USER_ERRORS.NOT_EXIST)
 
-async def validate(req: Request):
-    method = req.method.lower()
-    cookie = req.cookies or {}
+        """missing fields"""
+        return json_response(USER_ERRORS.MISSING_FIELDS)
 
-    _LOGGER.info(await parse_query(req.query_string))
+    @routes.get("/user/logout")
+    async def user_logout(req: Request):
+        session = await get_session(req)
 
-    path = {}
+        core.user_manager.logout(session)
 
-    mime_type = req.headers.get('Accept') or \
-        req.headers.get('Content-Type')
+        return json_response({
+            "status": "ok"
+        })
 
-    query_dict = await parse_query(req.query_string)
-    query = ImmutableMultiDict(query_dict.items())
+    @routes.get("/scrapers/list")
+    async def scraper_list(req: Request):
+        session = await get_session(req)
 
-    params = RequestParameters(
-        query=query,
-        header=req.headers,
-        cookie=cookie,
-        path=path
-    )
+        if core.user_manager.current_session(session) is not None:
+            return json_response({
+                "scraper_list": core.scraper_manager.scraper_names()
+            })
 
-    openapi_req = OpenAPIRequest(
-        full_url_pattern=req.url,
-        method=method,
-        parameters=params,
-        body=req.text(),
-        mimetype=mime_type
-    )
-    return validator.validate(openapi_req)
+        return json_response(USER_ERRORS.NOT_LOGGED_IN)
 
+    @routes.post("/scrapers/start")
+    async def start_scraper(req: Request):
+        session = await get_session(req)
+        usession = core.user_manager.current_session(session)
 
-async def parse_query(query_string: str):
-    # TODO: add decode support
+        if usession is not None:
+            name = req.headers.get("scraper_name")
+            if name and core.scraper_manager.scrapers.get(name):
+                scraper = core.scraper_manager.scrapers.get(name)()
+                await usession.start_scraper(scraper)
 
-    params = {}
+                return json_response({
+                    "scraper": scraper.name
+                })
 
-    is_encoded = '+' in query_string or '%' in query_string
+            return json_response(SCRAPER_ERRORS.NOT_EXIST)
 
-    for field in query_string.split('&'):
-        k, _, v = field.partition('=')
+        return json_response(USER_ERRORS.NOT_LOGGED_IN)
 
-        """skip if vlaue is empty"""
-        if not v:
-            continue
+    @routes.get("/output/{filename}")
+    async def download_output(req: Request):
+        session = await get_session(req)
 
-        if is_encoded:
-            pass
+        if core.user_manager.current_session(session) is None:
+            return json_response(USER_ERRORS.NOT_LOGGED_IN)
 
-        if k in params:
-            old_value = params[k]
+        if 'filename' in req.match_info:
+            filename: str = req.match_info.get("filename")
 
-            if ',' in v:
-                v = v.split(',')
+            if filename.find("/") == -1 and filename.find("\\") == -1:
+                path = core.output_manager.output_root / filename
 
-                additional_values = [element for element in v]
+                _LOGGER.info(path)
 
-                if isinstance(old_value, list):
-                    old_value.extend(additional_values)
-                else:
-                    additional_values.insert(0, old_value)
-                    params[k] = additional_values
-            else:
-                if is_encoded:
-                    pass
+                if path.exists() and path.is_file():
+                    mime = magic.from_file(str(path), mime=True)
+                    _LOGGER.info(f"uploading: {filename} {mime}")
 
-                if isinstance(old_value, list):
-                    old_value.append(v)
-                else:
-                    params[k] = [old_value, v]
-        else:
-            if ',' in v:
-                v = v.split(',')
+                    resp = StreamResponse(headers={'Content-Type': mime})
+                    await resp.prepare(req)
 
-                params[k] = [element for element in v]
-            elif is_encoded:
+                    with path.open('rb') as file:
+                        for line in file.readlines():
+                            await resp.write(line)
+
+                    await resp.write_eof()
+                    return resp
+
+                return json_response(OUTPUT_ERRORS.NOT_EXIST)
+
+            return json_response(OUTPUT_ERRORS.INVALID)
+
+    @routes.get("/ws")
+    async def socket_server(req: Request):
+        session = await get_session(req)
+        usession = core.user_manager.current_session(session)
+
+        if usession is None:
+            return json_response(USER_ERRORS.NOT_LOGGED_IN)
+
+        _LOGGER.info("starting websocket")
+
+        ws = await usession.new_socket(req)
+
+        async for msg in ws:
+            if msg.type == WSMsgType.TEXT:
+                # dict = json.loads(msg.data)
                 pass
-            else:
-                params[k] = v
+            elif msg.type == WSMsgType.ERROR:
+                _LOGGER.exception(
+                    f"socket closed with exception: {ws.exception()}"
+                )
 
-    return params
+        usession.rm_socket(ws)
+        return ws
+
+    app.add_routes(routes)
